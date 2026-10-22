@@ -1,0 +1,37 @@
+{
+ "2023-02": {
+  "complete": true,
+  "docs": 64,
+  "failed": [],
+  "list_fail": 0,
+  "rows": 64
+ },
+ "2023-03": {
+  "complete": true,
+  "docs": 527,
+  "failed": [],
+  "list_fail": 0,
+  "rows": 527
+ },
+ "2023-04": {
+  "complete": true,
+  "docs": 64,
+  "failed": [],
+  "list_fail": 0,
+  "rows": 64
+ },
+ "2023-05": {
+  "complete": true,
+  "docs": 219,
+  "failed": [],
+  "list_fail": 0,
+  "rows": 219
+ },
+ "2023-06": {
+  "complete": true,
+  "docs": 2346,
+  "failed": [],
+  "list_fail": 0,
+  "rows": 2346
+ }
+}

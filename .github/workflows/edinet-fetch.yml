@@ -1,0 +1,129 @@
+name: edinet-fetch
+
+# C-140（2026-10-21）: 金融庁 EDINET API（v2）から、提出月ごとに有報の数値（書籍の手順に要るものだけ）を取り、
+# data/edinet/asr_YYYY-MM.csv.gz に1通1行で残す。手動起動のみ。月ごとにコミットするので、
+# 途中で止まっても同じ範囲で起動し直せば続きから取る（完了した月は飛ばし、途中の月は取った書類を飛ばす）。
+# キーは secret の EDINET_API_KEY（ログには出さない）。
+# ⚠ 同じワークフローは1本ずつしか走らない（concurrency）。走っている間に2本続けて予約すると、待っていた方は
+#   GitHub が取り消す ─ 範囲が抜けたら同じ範囲で起動し直す（完了した月は飛ばすので重ならない）。
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "最初の提出月 YYYY-MM"
+        required: true
+        default: "2020-06"
+      to:
+        description: "最後の提出月 YYYY-MM"
+        required: true
+        default: "2026-07"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: edinet-fetch
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      TZ: Asia/Tokyo
+      FROM: ${{ inputs.from }}
+      TO: ${{ inputs.to }}
+    steps:
+      # 手動起動は既定で**予約した時点のコミット**を取り出す ─ ブランチ名で取り出して、走り始めた時点の最新にする
+      #（2026-10-22: 2本目が1本目の記録を知らずに始まった・requirements も予約時点のものになっていた）
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Fetch month by month and commit each month
+        # キーはこの手順にだけ渡す（取り出し・pip install の手順には渡さない・レビュー10回目）
+        env:
+          EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
+        # 入力をそのままコマンドに埋め込まない（YYYY-MM の形だけ通す）
+        run: |
+          re='^20[0-9]{2}-(0[1-9]|1[0-2])$'
+          [[ "$FROM" =~ $re && "$TO" =~ $re ]] || { echo "月は YYYY-MM"; exit 1; }
+          # ジョブの上限（355分）より前に自分で止める ─ 止めずに切られると、取りかけの月の分（6月なら約1時間）を失う
+          export EDINET_DEADLINE=$(( $(date +%s) + 330 * 60 ))
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 最新を取り込めないまま始めない（|| true で黙って古い状態から始めると、前の実行の記録を知らずに取り直す）
+          git pull --no-rebase --no-edit origin "${GITHUB_REF_NAME}" || { echo "🔴 最新を取り込めない ─ 始めない"; exit 1; }
+          push_month() {
+            for i in 1 2 3 4; do
+              git push origin "HEAD:${GITHUB_REF_NAME}" && return 0
+              # data/edinet を書くのはこの workflow だけで、同時に走るのは1本だけ ─ 取り込みが食い違うのは想定外なので、
+              # 混ぜずに止める（-X theirs は JSON を部分ごとに混ぜ、「完了」と書類の抜けが同居した・レビュー8回目）
+              git pull --no-rebase --no-edit origin "${GITHUB_REF_NAME}" || {
+                git merge --abort || true
+                echo "🔴 最新を取り込めない／食い違った ─ 混ぜずに止める（起動し直せば続きから取る）"
+                exit 1
+              }
+              sleep $(( 5 * i ))
+            done
+            return 1
+          }
+          mkdir -p data/edinet          # 最初の月が落ちても git add が「パスが無い」で止まらないように
+          m="$FROM"; attempted=""; crashed=""; rejected=0; stopped=0
+          while [[ ! "$m" > "$TO" ]]; do
+            rc=0
+            python edinet_fin.py --fetch-month "$m" || rc=$?
+            attempted="$attempted $m"
+            case $rc in
+              0) ;;
+              2) echo "⚠ $m は未完了（rc=$rc・同じ範囲で起動し直せば続きから取る）" ;;
+              # 3＝時間切れで止めた。シェルの時計（秒単位）を待たずにここで止める（同じ秒の中で次の月を始めていた・レビュー10回目）
+              3) echo "⚠ $m は時間切れの前に止めた"; stopped=1 ;;
+              4) rejected=1 ;;
+              # 0/2/3/4 以外は想定外の落ち方（例外・強制終了）─ 記録が書かれないので集計に出ない。ここで覚えて最後に赤にする（レビュー9回目）
+              *) echo "🔴 $m で想定外の終わり方（rc=$rc）"; crashed="$crashed $m" ;;
+            esac
+            git add data/edinet
+            if ! git diff --cached --quiet; then
+              git commit -q -m "C-140 有報の数値 $m [automated]"
+              push_month || echo "⚠ $m を push できない（最後にもう一度送る）"
+            fi
+            if [[ $rejected == 1 ]]; then
+              echo "🔴 EDINET がキーを拒否した ─ 取得を止める"
+              break
+            fi
+            if [[ $stopped == 1 ]] || (( $(date +%s) > EDINET_DEADLINE )); then
+              echo "⏱ 時間切れの前に止めた（$m まで）─ 同じ範囲で起動し直せば続きから取る"
+              break
+            fi
+            m=$(date -d "$m-01 +1 month" +%Y-%m)
+          done
+          # 送れていないコミットが残ったまま終わらない（ここで黙ると、取った分がランナーと一緒に消える）
+          git fetch -q origin "${GITHUB_REF_NAME}"
+          if [[ $(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD") != 0 ]]; then
+            push_month || { echo "🔴 push できないまま終わる"; exit 1; }
+          fi
+          # 集計は送った後に出す。赤にするのは**この実行で回した月**だけ（届かなかった月の古い失敗では赤にしない・レビュー9回目）
+          sum_rc=0
+          ATTEMPTED="$attempted" python - <<'EOF' || sum_rc=$?
+          import os, sys
+          import edinet_fin as E
+          d = E.done_months()
+          lo, hi = os.environ["FROM"], os.environ["TO"]
+          rng = {k: v for k, v in d.items() if lo <= k <= hi}
+          ok = sorted(k for k, v in rng.items() if E.is_done(v))
+          bad = sorted(k for k, v in rng.items() if not E.is_done(v))
+          nc = sum(len(v.get("no_csv") or []) for v in rng.values())
+          print("完了（一覧の検査つき・v{}）{} か月 / 未完了 {} / CSV の無い有報 {}件".format(E.LIST_V, len(ok), bad or "なし", nc))
+          fail = E.failing_months(lo, hi, only=os.environ.get("ATTEMPTED", "").split())
+          if fail:
+              print("🔴 取れなかった月（一覧の失敗・取れない書類・キーの拒否）: {}".format(fail))
+              sys.exit(1)
+          EOF
+          [[ -z "$crashed" ]] || echo "🔴 想定外の終わり方をした月:$crashed"
+          if [[ $sum_rc != 0 || -n "$crashed" || $rejected == 1 ]]; then exit 1; fi
