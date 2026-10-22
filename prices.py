@@ -28,6 +28,9 @@ JPX_PAGE = "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"
 UA = {"User-Agent": "Mozilla/5.0 (research; contact via GitHub)"}
 
 
+NOTES = []      # JPX の取得の経過（最後に prices/run.json に残す ─ ログの先頭は長くて読み返しにくい）
+
+
 def log(m):
     print(m, flush=True)
 
@@ -42,7 +45,9 @@ def edinet_codes():
 
 def _jpx_get(url):
     r = requests.get(url, headers=UA, timeout=60)
-    log("JPX {} → HTTP {} {}bytes".format(url.rsplit("/", 1)[-1], r.status_code, len(r.content)))
+    msg = "JPX {} → HTTP {} {}bytes".format(url.rsplit("/", 1)[-1], r.status_code, len(r.content))
+    log(msg)
+    NOTES.append(msg)
     r.raise_for_status()
     return r
 
@@ -67,7 +72,9 @@ def jpx_codes():
             log("JPX の上場銘柄一覧 {:,}銘柄（{}）".format(len(out), attempt))
             return out
         except Exception as e:
-            log("⚠ JPX の上場銘柄一覧を取れない（{}: {}・{}）".format(attempt, type(e).__name__, str(e)[:120]))
+            msg = "⚠ JPX の上場銘柄一覧を取れない（{}: {}・{}）".format(attempt, type(e).__name__, str(e)[:160])
+            log(msg)
+            NOTES.append(msg)
     log("⚠ EDINET の証券コードだけで取る")
     return set()
 
@@ -155,6 +162,10 @@ def main():
     n, d, s = save(C, A, S, "prices.npz")
     log("書いた: 銘柄 {:,} × 日付 {:,}・分割 {:,}件（{}〜{}）".format(n, d, s, C[BENCH].index.min().date(),
                                                          C[BENCH].index.max().date()))
+    import json
+    with open("prices/run.json", "w", encoding="utf-8") as f:
+        json.dump({"edinet_codes": len(ed), "jpx_codes": len(jp), "requested": len(codes), "got": len(C),
+                   "dates": d, "splits": s, "jpx_notes": NOTES}, f, ensure_ascii=False, indent=1)
     return 0
 
 
