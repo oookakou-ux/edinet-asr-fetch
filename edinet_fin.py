@@ -431,7 +431,10 @@ def extract(rows, meta=None):
             return e, x
         return None, None
 
-    sales_order = SALES_IFRS + SALES_JP if std == "IFRS" else SALES_US + SALES_JP if std == "US GAAP" else SALES_JP + SALES_IFRS
+    # 移行した会社は前の年が前の基準の行にある（日本基準→IFRS は 2026-10-21 レビュー2回目、米国基準→IFRS は 2026-10-22:
+    #   ソニー・トヨタ・TDK 等の移行の年の前期以前が米国基準の売上の行にしか無かった）。前に埋まっていた値は変わらない（後ろに足すだけ）
+    sales_order = (SALES_IFRS + SALES_JP + SALES_US if std == "IFRS" else SALES_US + SALES_JP + SALES_IFRS
+                   if std == "US GAAP" else SALES_JP + SALES_IFRS + SALES_US)
     # 標準の要素の後ろに、末尾の名前が合う会社独自の要素を足す（文脈は完全一致で引くので、セグメント行は拾わない）
     local = sorted({e for (e, _c) in v if ":" in str(e) and not str(e).startswith(("jpcrp_cor:", "jppfs_cor:", "jpigp_cor:"))})
     sales_order = sales_order + tuple(e for e in local if SALES_LOCAL.match(e.split(":", 1)[1]))
@@ -457,7 +460,10 @@ def extract(rows, meta=None):
     out["payout_rep"] = _f(get(("jpcrp_cor:PayoutRatioSummaryOfBusinessResults",),
                                "CurrentYearDuration_NonConsolidatedMember")[1])
     out["eq_ratio"] = _f(get(EQ_RATIO[1:] + EQ_RATIO[:1] if std == "IFRS" else EQ_RATIO, "CurrentYearInstant" + sfx)[1])
-    out["assets"] = _f(get(ASSETS[::-1] if std == "IFRS" else ASSETS, "CurrentYearInstant" + sfx)[1])
+    # ⚠ IFRS は IFRS → 日本基準 → 米国基準の順（2026-10-22: 米国基準の要素を足して逆順にしたら、米国基準から IFRS に移った年の
+    #   TDK〔S100ODQV〕が米国基準の総資産を読んだ ─ 取り直しの「前の値が変わった」で見つかった）
+    out["assets"] = _f(get(ASSETS[1::-1] + ASSETS[2:] if std == "IFRS" else ASSETS[2:] + ASSETS[:2] if std == "US GAAP"
+                           else ASSETS, "CurrentYearInstant" + sfx)[1])
     out["equity_fs"] = _f(get(EQUITY_FS[::-1] if std == "IFRS" else EQUITY_FS, "CurrentYearInstant" + sfx)[1])
     out["shares_fy"] = _f(get(("jpcrp_cor:TotalNumberOfIssuedSharesSummaryOfBusinessResults",),
                               "CurrentYearInstant_NonConsolidatedMember")[1])
@@ -623,7 +629,7 @@ def failing_months(lo, hi, only=None):
                   and (v.get("list_fail") or v.get("failed") or v.get("rejected")))
 
 
-EXTRACT_V = 2   # 会社独自の要約の要素・米国基準の要素を読む版（2026-10-22 C-140 の穴）
+EXTRACT_V = 3   # 3: 米国基準→IFRS の移行の年の売上・IFRS の総資産を IFRS から（2026-10-22）／2: 会社独自の要約の要素・米国基準の要素
 _META = {"docID": "docID", "secCode": "code4", "edinetCode": "edinetCode", "filerName": "filerName",
          "submitDateTime": "submit", "periodStart": "periodStart", "periodEnd": "periodEnd"}
 _SAME = ("sales_elem", "sales_mixed")     # 埋まった年が増えれば変わって当然の印（値の食い違いには数えない）
