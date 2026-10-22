@@ -24,6 +24,8 @@ START = "2019-03-01"
 BENCH = "1306"
 CHUNK, RETRY = 150, 3
 JPX_URL = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
+JPX_PAGE = "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"
+UA = {"User-Agent": "Mozilla/5.0 (research; contact via GitHub)"}
 
 
 def log(m):
@@ -38,17 +40,36 @@ def edinet_codes():
     return out
 
 
+def _jpx_get(url):
+    r = requests.get(url, headers=UA, timeout=60)
+    log("JPX {} → HTTP {} {}bytes".format(url.rsplit("/", 1)[-1], r.status_code, len(r.content)))
+    r.raise_for_status()
+    return r
+
+
 def jpx_codes():
-    """JPX の上場銘柄一覧（取れなければ空 ─ 取れなかったことはログに出す）"""
-    try:
-        r = requests.get(JPX_URL, timeout=60)
-        r.raise_for_status()
-        df = pd.read_excel(io.BytesIO(r.content), dtype=str)
-        col = next(c for c in df.columns if "コード" in str(c))
-        return {c for c in (CU.norm_code(x) for x in df[col].dropna()) if c}
-    except Exception as e:
-        log("⚠ JPX の上場銘柄一覧を取れない（{}）─ EDINET の証券コードだけで取る".format(type(e).__name__))
-        return set()
+    """JPX の上場銘柄一覧（取れなければ空 ─ 取れなかったことはログに出す）。
+    User-Agent が無いと拒否されることがある。ファイルの場所が変わっていれば一覧のページから探す"""
+    import re
+    for attempt in ("direct", "page"):
+        try:
+            url = JPX_URL
+            if attempt == "page":
+                page = _jpx_get(JPX_PAGE).text
+                m = re.search(r'href="([^"]*data_j\.xls[x]?)"', page)
+                if not m:
+                    log("⚠ JPX の一覧のページに data_j.xls のリンクが無い")
+                    return set()
+                url = m.group(1) if m.group(1).startswith("http") else "https://www.jpx.co.jp" + m.group(1)
+            df = pd.read_excel(io.BytesIO(_jpx_get(url).content), dtype=str)
+            col = next(c for c in df.columns if "コード" in str(c))
+            out = {c for c in (CU.norm_code(x) for x in df[col].dropna()) if c}
+            log("JPX の上場銘柄一覧 {:,}銘柄（{}）".format(len(out), attempt))
+            return out
+        except Exception as e:
+            log("⚠ JPX の上場銘柄一覧を取れない（{}: {}・{}）".format(attempt, type(e).__name__, str(e)[:120]))
+    log("⚠ EDINET の証券コードだけで取る")
+    return set()
 
 
 def _norm(s):
