@@ -5,6 +5,13 @@ name: prices
 # 中身: prices.enc（AES-256-CBC・鍵は乱数）／ key.enc（その鍵を公開鍵で RSA-OAEP 暗号化）／ prices.sha256（復号後の確認用）
 on:
   workflow_dispatch:
+    inputs:
+      codes:
+        description: "all（EDINET ∪ JPX の全銘柄）/ jpx_new（JPX にあって EDINET に無い銘柄だけ）"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, jpx_new]
 
 permissions:
   contents: write
@@ -29,6 +36,8 @@ jobs:
       - name: Install dependencies
         run: pip install pandas numpy requests yfinance xlrd openpyxl
       - name: Download prices
+        env:
+          CODES: ${{ inputs.codes }}
         run: python prices.py
       - name: Encrypt and commit
         run: |

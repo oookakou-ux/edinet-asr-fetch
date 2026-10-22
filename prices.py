@@ -149,9 +149,19 @@ def save(C, A, S, path):
 
 
 def main():
+    import os
     ed, jp = edinet_codes(), jpx_codes()
-    codes = sorted(ed | jp | {BENCH})
-    log("銘柄: EDINET {:,} ∪ JPX {:,} → {:,}".format(len(ed), len(jp), len(codes)))
+    mode = os.environ.get("CODES", "all")
+    if mode == "jpx_new":
+        # 足りない分だけ取る: JPX の一覧にあって EDINET に無い銘柄（新規上場など）＋ 1306（同じ日の突き合わせ用）。
+        # 全銘柄を1時間に3回取り直すと Yahoo の回数制限で半分落ちた（2026-10-22）
+        if not jp:
+            log("🔴 JPX の一覧が取れない ─ 足りない分を決められない")
+            return 1
+        codes = sorted((jp - ed) | {BENCH})
+    else:
+        codes = sorted(ed | jp | {BENCH})
+    log("銘柄（{}）: EDINET {:,} ∪ JPX {:,} → {:,}".format(mode, len(ed), len(jp), len(codes)))
     C, A, S = fetch(codes)
     miss = sorted(set(codes) - set(C))
     log("取れた {:,} / {:,}（取れない {:,}・先頭の文字別 {}）".format(
@@ -164,7 +174,7 @@ def main():
                                                          C[BENCH].index.max().date()))
     import json
     with open("prices/run.json", "w", encoding="utf-8") as f:
-        json.dump({"edinet_codes": len(ed), "jpx_codes": len(jp), "requested": len(codes), "got": len(C),
+        json.dump({"mode": mode, "edinet_codes": len(ed), "jpx_codes": len(jp), "requested": len(codes), "got": len(C),
                    "dates": d, "splits": s, "jpx_notes": NOTES}, f, ensure_ascii=False, indent=1)
     return 0
 
