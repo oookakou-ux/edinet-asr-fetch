@@ -1,7 +1,14 @@
 {
  "complete": true,
- "docs": 2381,
+ "docs": 2378,
  "failed": [],
+ "future_days": 0,
  "list_fail": 0,
- "rows": 2381
+ "no_csv": [
+  "S100LHPJ"
+ ],
+ "rejected": false,
+ "rows": 2378,
+ "stopped": false,
+ "v": 2
 }
