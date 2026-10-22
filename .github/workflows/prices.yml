@@ -1,0 +1,53 @@
+name: prices
+
+# 東証の銘柄の日次株価を Yahoo Finance から取り、**暗号化してから** prices/ に置く（手動起動のみ）。
+# 価格そのものは公開しない ─ prices/pub.pem（公開鍵）で暗号化する。復号の鍵はこのリポジトリには無い。
+# 中身: prices.enc（AES-256-CBC・鍵は乱数）／ key.enc（その鍵を公開鍵で RSA-OAEP 暗号化）／ prices.sha256（復号後の確認用）
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prices
+  cancel-in-progress: false
+
+jobs:
+  prices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TZ: Asia/Tokyo
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install pandas numpy requests yfinance xlrd
+      - name: Download prices
+        run: python prices.py
+      - name: Encrypt and commit
+        run: |
+          set -euo pipefail
+          xz -T0 -9 prices.npz                       # → prices.npz.xz（元は消える）
+          sha256sum prices.npz.xz | cut -d' ' -f1 > prices/prices.sha256
+          openssl rand -hex 32 > k.txt
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass file:k.txt -in prices.npz.xz -out prices/prices.enc
+          openssl pkeyutl -encrypt -pubin -inkey prices/pub.pem -pkeyopt rsa_padding_mode:oaep \
+            -pkeyopt rsa_oaep_md:sha256 -in k.txt -out prices/key.enc
+          rm -f k.txt prices.npz.xz
+          ls -l prices/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add prices/
+          git commit -q -m "株価（暗号化） [automated]"
+          for i in 1 2 3 4; do
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            git pull --no-rebase --no-edit origin "${GITHUB_REF_NAME}" || { git merge --abort || true; echo "🔴 取り込みが食い違った"; exit 1; }
+            sleep $(( 5 * i ))
+          done
+          echo "🔴 push できない"; exit 1
