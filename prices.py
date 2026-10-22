@@ -97,7 +97,7 @@ def _norm(s):
 
 def _pass(codes, chunk):
     import yfinance as yf
-    C, A, S = {}, {}, {}
+    C, A, S, D = {}, {}, {}, {}
     items = sorted(codes)
     for i in range(0, len(items), chunk):
         part = items[i:i + chunk]
@@ -118,28 +118,29 @@ def _pass(codes, chunk):
                 sub = df[c + ".T"] if isinstance(df.columns, pd.MultiIndex) else df
                 cl, ad = _norm(sub["Close"]), _norm(sub["Adj Close"])
                 sp = _norm(sub["Stock Splits"]) if "Stock Splits" in sub else pd.Series(dtype=float)
+                dv = _norm(sub["Dividends"]) if "Dividends" in sub else pd.Series(dtype=float)
             except Exception:
                 continue
             if len(cl):
-                C[c], A[c], S[c] = cl, ad, sp[sp > 0]
+                C[c], A[c], S[c], D[c] = cl, ad, sp[sp > 0], dv[dv > 0]
         time.sleep(1.0)
-    return C, A, S
+    return C, A, S, D
 
 
 def fetch(codes):
-    C, A, S = _pass(codes, CHUNK)
+    C, A, S, D = _pass(codes, CHUNK)
     for k, wait in ((50, 10.0), (20, 30.0)):
         miss = sorted(set(codes) - set(C))
         if not miss:
             break
         log("取れなかった {}銘柄をもう一度（束 {}）".format(len(miss), k))
         time.sleep(wait)
-        C2, A2, S2 = _pass(miss, k)
-        C.update(C2), A.update(A2), S.update(S2)
-    return C, A, S
+        C2, A2, S2, D2 = _pass(miss, k)
+        C.update(C2), A.update(A2), S.update(S2), D.update(D2)
+    return C, A, S, D
 
 
-def save(C, A, S, path):
+def save(C, A, S, path, D=None):
     codes = sorted(C)
     dates = pd.DatetimeIndex(sorted(set().union(*[set(C[c].index) | set(A[c].index) for c in codes]))) \
         if codes else pd.DatetimeIndex([])
@@ -149,10 +150,18 @@ def save(C, A, S, path):
     for c in codes:
         for d, v in S.get(c, pd.Series(dtype=float)).items():
             sd.append(d), sc.append(c), sr.append(float(v))
+    # 分配金・配当（1株あたり・権利落ち日）─ 調整後終値が壊れた銘柄で配当込みを組み直すため（2026-10-22: 1321 の調整後終値が
+    #   1:100 の分割の後に負になっていた）。⚠ 分割の前の額か後の額かは Yahoo のまま（読む側で確かめる）
+    dd, dc, da = [], [], []
+    for c in codes:
+        for d, v in (D or {}).get(c, pd.Series(dtype=float)).items():
+            dd.append(d), dc.append(c), da.append(float(v))
     np.savez(path, dates=dates.values.astype("datetime64[D]"), codes=np.array(codes, dtype="U4"),
              close=close.to_numpy(dtype=np.float32), adj=adj.to_numpy(dtype=np.float32),
              split_date=np.array(sd, dtype="datetime64[D]"), split_code=np.array(sc, dtype="U4"),
-             split_ratio=np.array(sr, dtype=np.float64))
+             split_ratio=np.array(sr, dtype=np.float64),
+             div_date=np.array(dd, dtype="datetime64[D]"), div_code=np.array(dc, dtype="U4"),
+             div_amount=np.array(da, dtype=np.float64))
     return len(codes), len(dates), len(sd)
 
 
@@ -183,14 +192,14 @@ def main():
     else:
         codes = sorted(ed | jp | {BENCH})
     log("銘柄（{}）: EDINET {:,} ∪ JPX {:,} → {:,}".format(mode, len(ed), len(jp), len(codes)))
-    C, A, S = fetch(codes)
+    C, A, S, D = fetch(codes)
     miss = sorted(set(codes) - set(C))
     log("取れた {:,} / {:,}（取れない {:,}・先頭の文字別 {}）".format(
         len(C), len(codes), len(miss), dict(pd.Series([m[0] for m in miss]).value_counts()) if miss else {}))
     if BENCH not in C:
         log("🔴 1306 が取れない")
         return 1
-    n, d, s = save(C, A, S, "prices.npz")
+    n, d, s = save(C, A, S, "prices.npz", D)
     log("書いた: 銘柄 {:,} × 日付 {:,}・分割 {:,}件（{}〜{}）".format(n, d, s, C[BENCH].index.min().date(),
                                                          C[BENCH].index.max().date()))
     import json
