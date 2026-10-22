@@ -1,0 +1,141 @@
+# -*- coding: utf-8 -*-
+"""
+東証の銘柄の日次株価（終値・調整後終値・株式分割）を Yahoo Finance から取り、1つのファイルにまとめる。
+
+- 銘柄 = data/edinet の証券コード ∪ JPX の上場銘柄一覧 ∪ 1306（TOPIX 連動 ETF）
+- 終値は yfinance の auto_adjust=False（分割だけ調整）、調整後終値は分割と配当を調整したもの
+- 出力 prices.npz（pickle を使わない）:
+    dates (datetime64[D]) / codes (U4) / close, adj (float32, 日付×銘柄・欠けは NaN) /
+    split_date (datetime64[D]) / split_code (U4) / split_ratio (float64)
+- ファイルはワークフローが暗号化してから置く（価格そのものは公開しない）
+"""
+import glob
+import io
+import sys
+import time
+
+import numpy as np
+import pandas as pd
+import requests
+
+import code_utils as CU
+
+START = "2019-03-01"
+BENCH = "1306"
+CHUNK, RETRY = 150, 3
+JPX_URL = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
+
+
+def log(m):
+    print(m, flush=True)
+
+
+def edinet_codes():
+    out = set()
+    for f in sorted(glob.glob("data/edinet/asr_*.csv.gz")):
+        df = pd.read_csv(f, usecols=["code4"], dtype=str)
+        out |= {c for c in (CU.norm_code(x) for x in df["code4"].dropna()) if c}
+    return out
+
+
+def jpx_codes():
+    """JPX の上場銘柄一覧（取れなければ空 ─ 取れなかったことはログに出す）"""
+    try:
+        r = requests.get(JPX_URL, timeout=60)
+        r.raise_for_status()
+        df = pd.read_excel(io.BytesIO(r.content), dtype=str)
+        col = next(c for c in df.columns if "コード" in str(c))
+        return {c for c in (CU.norm_code(x) for x in df[col].dropna()) if c}
+    except Exception as e:
+        log("⚠ JPX の上場銘柄一覧を取れない（{}）─ EDINET の証券コードだけで取る".format(type(e).__name__))
+        return set()
+
+
+def _norm(s):
+    s = s.dropna()
+    idx = s.index
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_localize(None)
+    return pd.Series(s.values, index=pd.DatetimeIndex(idx).normalize())
+
+
+def _pass(codes, chunk):
+    import yfinance as yf
+    C, A, S = {}, {}, {}
+    items = sorted(codes)
+    for i in range(0, len(items), chunk):
+        part = items[i:i + chunk]
+        df = None
+        for att in range(RETRY):
+            try:
+                df = yf.download([c + ".T" for c in part], start=START, progress=False, auto_adjust=False,
+                                 actions=True, group_by="ticker", threads=True)
+                if df is not None and not df.empty:
+                    break
+            except Exception as e:
+                log("価格 {}〜 取得失敗({}): {}".format(part[0], att + 1, type(e).__name__))
+            time.sleep(3.0 * (att + 1))
+        if df is None or df.empty:
+            continue
+        for c in part:
+            try:
+                sub = df[c + ".T"] if isinstance(df.columns, pd.MultiIndex) else df
+                cl, ad = _norm(sub["Close"]), _norm(sub["Adj Close"])
+                sp = _norm(sub["Stock Splits"]) if "Stock Splits" in sub else pd.Series(dtype=float)
+            except Exception:
+                continue
+            if len(cl):
+                C[c], A[c], S[c] = cl, ad, sp[sp > 0]
+        time.sleep(1.0)
+    return C, A, S
+
+
+def fetch(codes):
+    C, A, S = _pass(codes, CHUNK)
+    for k, wait in ((50, 10.0), (20, 30.0)):
+        miss = sorted(set(codes) - set(C))
+        if not miss:
+            break
+        log("取れなかった {}銘柄をもう一度（束 {}）".format(len(miss), k))
+        time.sleep(wait)
+        C2, A2, S2 = _pass(miss, k)
+        C.update(C2), A.update(A2), S.update(S2)
+    return C, A, S
+
+
+def save(C, A, S, path):
+    codes = sorted(C)
+    dates = pd.DatetimeIndex(sorted(set().union(*[set(C[c].index) | set(A[c].index) for c in codes]))) \
+        if codes else pd.DatetimeIndex([])
+    close = pd.DataFrame({c: C[c] for c in codes}).reindex(index=dates, columns=codes)
+    adj = pd.DataFrame({c: A[c] for c in codes}).reindex(index=dates, columns=codes)
+    sd, sc, sr = [], [], []
+    for c in codes:
+        for d, v in S.get(c, pd.Series(dtype=float)).items():
+            sd.append(d), sc.append(c), sr.append(float(v))
+    np.savez(path, dates=dates.values.astype("datetime64[D]"), codes=np.array(codes, dtype="U4"),
+             close=close.to_numpy(dtype=np.float32), adj=adj.to_numpy(dtype=np.float32),
+             split_date=np.array(sd, dtype="datetime64[D]"), split_code=np.array(sc, dtype="U4"),
+             split_ratio=np.array(sr, dtype=np.float64))
+    return len(codes), len(dates), len(sd)
+
+
+def main():
+    ed, jp = edinet_codes(), jpx_codes()
+    codes = sorted(ed | jp | {BENCH})
+    log("銘柄: EDINET {:,} ∪ JPX {:,} → {:,}".format(len(ed), len(jp), len(codes)))
+    C, A, S = fetch(codes)
+    miss = sorted(set(codes) - set(C))
+    log("取れた {:,} / {:,}（取れない {:,}・先頭の文字別 {}）".format(
+        len(C), len(codes), len(miss), dict(pd.Series([m[0] for m in miss]).value_counts()) if miss else {}))
+    if BENCH not in C:
+        log("🔴 1306 が取れない")
+        return 1
+    n, d, s = save(C, A, S, "prices.npz")
+    log("書いた: 銘柄 {:,} × 日付 {:,}・分割 {:,}件（{}〜{}）".format(n, d, s, C[BENCH].index.min().date(),
+                                                         C[BENCH].index.max().date()))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
