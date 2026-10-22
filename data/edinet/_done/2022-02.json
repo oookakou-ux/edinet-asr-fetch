@@ -2,6 +2,11 @@
  "complete": true,
  "docs": 62,
  "failed": [],
+ "future_days": 0,
  "list_fail": 0,
- "rows": 62
+ "no_csv": [],
+ "rejected": false,
+ "rows": 62,
+ "stopped": false,
+ "v": 2
 }
