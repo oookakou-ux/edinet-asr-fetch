@@ -1,14 +1,16 @@
 {
- "edinet_codes": 4338,
- "jpx_codes": 4440,
- "requested": 5130,
- "got": 2703,
+ "mode": "missing",
+ "edinet_codes": 4357,
+ "jpx_codes": 3700,
+ "requested": 728,
+ "got": 56,
  "dates": 1863,
- "splits": 768,
+ "splits": 3,
  "jpx_notes": [
   "JPX data_j.xls → HTTP 404 21245bytes",
   "⚠ JPX の上場銘柄一覧を取れない（direct: HTTPError・404 Client Error: Not Found for url: https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls）",
   "JPX 01.html → HTTP 200 30077bytes",
-  "JPX data_j.xlsx → HTTP 200 266304bytes"
+  "JPX data_j.xlsx → HTTP 200 266304bytes",
+  "JPX: 株式だけ 3,707/4,447（区分の列 市場・商品区分）"
  ]
 }
