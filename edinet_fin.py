@@ -433,11 +433,15 @@ def extract(rows, meta=None):
 
     # 移行した会社は前の年が前の基準の行にある（日本基準→IFRS は 2026-10-21 レビュー2回目、米国基準→IFRS は 2026-10-22:
     #   ソニー・トヨタ・TDK 等の移行の年の前期以前が米国基準の売上の行にしか無かった）。前に埋まっていた値は変わらない（後ろに足すだけ）
-    sales_order = (SALES_IFRS + SALES_JP + SALES_US if std == "IFRS" else SALES_US + SALES_JP + SALES_IFRS
-                   if std == "US GAAP" else SALES_JP + SALES_IFRS + SALES_US)
     # 標準の要素の後ろに、末尾の名前が合う会社独自の要素を足す（文脈は完全一致で引くので、セグメント行は拾わない）
     local = sorted({e for (e, _c) in v if ":" in str(e) and not str(e).startswith(("jpcrp_cor:", "jppfs_cor:", "jpigp_cor:"))})
-    sales_order = sales_order + tuple(e for e in local if SALES_LOCAL.match(e.split(":", 1)[1]))
+    local_sales = tuple(e for e in local if SALES_LOCAL.match(e.split(":", 1)[1]))
+    # ⚠ IFRS の会社の前の基準の米国基準の行は**会社独自の要素の後ろ**（2026-10-22 取り直し2回目の「前の値が変わった」6件:
+    #   トヨタの移行の年は前期を IFRS で組み直した値〔会社独自の KeyFinancialData・29.87兆〕と米国基準の値〔29.93兆〕の
+    #   両方があり、米国基準を先に読んでいた）。同じ基準で組み直した値が先
+    sales_order = (SALES_IFRS + SALES_JP + local_sales + SALES_US if std == "IFRS"
+                   else SALES_US + SALES_JP + local_sales + SALES_IFRS if std == "US GAAP"
+                   else SALES_JP + SALES_IFRS + local_sales + SALES_US)
     op_order = tuple(e for e in local if OP_LOCAL.match(e.split(":", 1)[1]))
     out = {"std": std, "cons": cons}
     used = []
@@ -629,7 +633,7 @@ def failing_months(lo, hi, only=None):
                   and (v.get("list_fail") or v.get("failed") or v.get("rejected")))
 
 
-EXTRACT_V = 3   # 3: 米国基準→IFRS の移行の年の売上・IFRS の総資産を IFRS から（2026-10-22）／2: 会社独自の要約の要素・米国基準の要素
+EXTRACT_V = 4   # 4: IFRS の会社の米国基準の売上は会社独自の要素の後ろ（2026-10-22）／3: 米国基準→IFRS の移行の年の売上・IFRS の総資産を IFRS から（2026-10-22）／2: 会社独自の要約の要素・米国基準の要素
 _META = {"docID": "docID", "secCode": "code4", "edinetCode": "edinetCode", "filerName": "filerName",
          "submitDateTime": "submit", "periodStart": "periodStart", "periodEnd": "periodEnd"}
 _SAME = ("sales_elem", "sales_mixed")     # 埋まった年が増えれば変わって当然の印（値の食い違いには数えない）
