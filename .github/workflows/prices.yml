@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install pandas numpy requests yfinance xlrd
+        run: pip install pandas numpy requests yfinance xlrd openpyxl
       - name: Download prices
         run: python prices.py
       - name: Encrypt and commit
