@@ -239,6 +239,41 @@ def probe(log=print):
     return 0
 
 
+PROBE_PAT = re.compile(r"(OperatingIncome|OperatingProfit|OperatingRevenue|Revenue|NetSales|Sales|OrdinaryIncome|"
+                       r"ProfitLossBeforeTax|IncomeBeforeIncomeTaxes)", re.I)
+
+
+def probe_docs(ids, log=print, sleep=0.7):
+    """C-140 の穴（2026-10-22）: 指定した書類の、売上・営業利益に当たりそうな要素を**要素名・文脈・値**で印字する
+    （IFRS・米国基準で営業利益・売上が空欄だった 50社 263通の読み方を決めるため。何も保存しない）"""
+    import time
+    for d in ids:
+        try:
+            rows = parse_csv_zip(fetch_csv_zip(d))
+        except Exception as e:
+            log("probe-docs: {} を取れない ({})".format(d, _mask(e)))
+            continue
+        head = [k for k in rows[0].keys() if k != "_file"] if rows else []
+        ce, cc, cv = _col(head, "要素ID"), _col(head, "コンテキストID"), _col(head, "値")
+        name = next((r.get(cv) for r in rows if r.get(ce, "").endswith("FilerNameInJapaneseDEI")), "")
+        std = next((r.get(cv) for r in rows if r.get(ce, "").endswith("AccountingStandardsDEI")), "")
+        log("probe-docs: ==== {} {} {}".format(d, name, std))
+        seen = set()
+        for r in rows:
+            e, c, v = r.get(ce, ""), r.get(cc, ""), r.get(cv, "")
+            if not PROBE_PAT.search(e) or not c.startswith(("CurrentYearDuration", "Prior1YearDuration")):
+                continue
+            if "Member" in c and "NonConsolidatedMember" not in c:
+                continue
+            key = (e, c)
+            if key in seen:
+                continue
+            seen.add(key)
+            log("probe-docs:   {} | {} | {}".format(e, c, v))
+        time.sleep(sleep)
+    return 0
+
+
 SURVEY_DATES = (("2025-06-27", None), ("2025-03-27", 150))   # 3月期の集中日（全件）と12月期の集中日（先頭150件）
 _NUM = re.compile(r"^-?[0-9][0-9,]*(\.[0-9]+)?$")
 _FS = re.compile(r"^(jppfs_cor|jpigp_cor|jpcrp_cor):.*(Sales|Revenue|OperatingIncome|OperatingProfit|"
@@ -573,6 +608,9 @@ def failing_months(lo, hi, only=None):
 
 
 if __name__ == "__main__":
+    if "--probe-docs" in sys.argv:
+        ids = [x for x in sys.argv[sys.argv.index("--probe-docs") + 1].split(",") if re.fullmatch(r"S[0-9A-Z]{7}", x)]
+        sys.exit(probe_docs(ids))
     if "--probe" in sys.argv:
         sys.exit(probe())
     if "--survey" in sys.argv:
