@@ -157,9 +157,18 @@ def save(C, A, S, path):
 
 
 def main():
-    ed, jp = edinet_codes(), jpx_codes()
-    mode = os.environ.get("CODES", "all")
-    if mode == "missing":
+    extra = [x.strip().upper() for x in os.environ.get("EXTRA", "").split(",") if x.strip()]
+    if extra:
+        # コードを指定して取る（ETF など・2026-10-22 C-144 の 1321/1545/1570）。英数字4文字だけ通す
+        ed, jp, mode = set(), set(), "extra"
+        codes = sorted({c for c in (CU.norm_code(x) for x in extra) if c} | {BENCH})
+        log("銘柄（指定）: {}".format(codes))
+    else:
+        ed, jp = edinet_codes(), jpx_codes()
+        mode = os.environ.get("CODES", "all")
+    if mode == "extra":
+        pass
+    elif mode == "missing":
         # 前に取れた銘柄（prices/have.txt・ティッカーのコードだけ）を除いた残りだけ取る（Yahoo の回数制限を避ける・2026-10-22）
         have = {l.strip() for l in open("prices/have.txt", encoding="utf-8") if l.strip()}
         codes = sorted(((ed | jp) - have) | {BENCH})

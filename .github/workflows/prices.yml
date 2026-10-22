@@ -12,6 +12,10 @@ on:
         default: "all"
         type: choice
         options: [all, missing, jpx_new]
+      extra:
+        description: "コードを指定して取る（カンマ区切り・ETF など）。空なら codes に従う"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -38,6 +42,7 @@ jobs:
       - name: Download prices
         env:
           CODES: ${{ inputs.codes }}
+          EXTRA: ${{ inputs.extra }}
           JPX_STOCKS_ONLY: ${{ inputs.codes == 'missing' && '1' || '0' }}
         run: python prices.py
       - name: Encrypt and commit
