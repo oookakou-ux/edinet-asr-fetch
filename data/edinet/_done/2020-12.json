@@ -1,7 +1,14 @@
 {
  "complete": true,
- "docs": 178,
+ "docs": 177,
  "failed": [],
+ "future_days": 0,
  "list_fail": 0,
- "rows": 178
+ "no_csv": [
+  "S100KEGZ"
+ ],
+ "rejected": false,
+ "rows": 177,
+ "stopped": false,
+ "v": 2
 }
