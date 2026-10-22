@@ -2,6 +2,13 @@
  "complete": true,
  "docs": 192,
  "failed": [],
+ "future_days": 0,
  "list_fail": 0,
- "rows": 192
+ "no_csv": [
+  "S100PRN0"
+ ],
+ "rejected": false,
+ "rows": 192,
+ "stopped": false,
+ "v": 2
 }
