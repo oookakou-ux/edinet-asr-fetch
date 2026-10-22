@@ -1,7 +1,14 @@
 {
  "complete": true,
- "docs": 2253,
+ "docs": 2247,
  "failed": [],
+ "future_days": 0,
  "list_fail": 0,
- "rows": 2253
+ "no_csv": [
+  "S100IQKG"
+ ],
+ "rejected": false,
+ "rows": 2247,
+ "stopped": false,
+ "v": 2
 }
