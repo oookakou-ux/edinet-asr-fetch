@@ -1,7 +1,12 @@
 {
  "complete": true,
- "docs": 170,
+ "docs": 169,
  "failed": [],
+ "future_days": 0,
  "list_fail": 0,
- "rows": 170
+ "no_csv": [],
+ "rejected": false,
+ "rows": 169,
+ "stopped": false,
+ "v": 2
 }
