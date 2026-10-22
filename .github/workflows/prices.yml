@@ -11,9 +11,17 @@ on:
         required: true
         default: "all"
         type: choice
-        options: [all, missing, jpx_new]
+        options: [all, missing, jpx_new, have]
       extra:
         description: "コードを指定して取る（カンマ区切り・ETF など）。空なら codes に従う"
+        required: false
+        default: ""
+      start:
+        description: "最初の日 YYYY-MM-DD（空なら 2019-03-01）"
+        required: false
+        default: ""
+      end:
+        description: "最後の日の翌日 YYYY-MM-DD（空なら今日まで）"
         required: false
         default: ""
 
@@ -43,6 +51,8 @@ jobs:
         env:
           CODES: ${{ inputs.codes }}
           EXTRA: ${{ inputs.extra }}
+          PX_START: ${{ inputs.start }}
+          PX_END: ${{ inputs.end }}
           JPX_STOCKS_ONLY: ${{ inputs.codes == 'missing' && '1' || '0' }}
         run: python prices.py
       - name: Encrypt and commit

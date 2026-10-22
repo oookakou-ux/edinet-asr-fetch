@@ -21,7 +21,8 @@ import requests
 
 import code_utils as CU
 
-START = "2019-03-01"
+START = os.environ.get("PX_START") or "2019-03-01"
+END = os.environ.get("PX_END") or None          # 遡り（2026-10-23）: 2019-03 より前だけを取るときに終わりを切る
 BENCH = "1306"
 CHUNK, RETRY = 150, 3
 JPX_URL = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
@@ -104,7 +105,7 @@ def _pass(codes, chunk):
         df = None
         for att in range(RETRY):
             try:
-                df = yf.download([c + ".T" for c in part], start=START, progress=False, auto_adjust=False,
+                df = yf.download([c + ".T" for c in part], start=START, end=END, progress=False, auto_adjust=False,
                                  actions=True, group_by="ticker", threads=True)
                 if df is not None and not df.empty:
                     break
@@ -172,11 +173,17 @@ def main():
         ed, jp, mode = set(), set(), "extra"
         codes = sorted({c for c in (CU.norm_code(x) for x in extra) if c} | {BENCH})
         log("銘柄（指定）: {}".format(codes))
+    elif os.environ.get("CODES") == "have":
+        ed, jp, mode = set(), set(), "have"
     else:
         ed, jp = edinet_codes(), jpx_codes()
         mode = os.environ.get("CODES", "all")
     if mode == "extra":
         pass
+    elif mode == "have":
+        # 遡り（2026-10-23）: 前に取れた銘柄（prices/have.txt）だけを、PX_START〜PX_END の期間で取り直す
+        have = {l.strip() for l in open("prices/have.txt", encoding="utf-8") if l.strip()}
+        codes = sorted(have | {BENCH})
     elif mode == "missing":
         # 前に取れた銘柄（prices/have.txt・ティッカーのコードだけ）を除いた残りだけ取る（Yahoo の回数制限を避ける・2026-10-22）
         have = {l.strip() for l in open("prices/have.txt", encoding="utf-8") if l.strip()}
@@ -204,7 +211,8 @@ def main():
                                                          C[BENCH].index.max().date()))
     import json
     with open("prices/run.json", "w", encoding="utf-8") as f:
-        json.dump({"mode": mode, "edinet_codes": len(ed), "jpx_codes": len(jp), "requested": len(codes), "got": len(C),
+        json.dump({"mode": mode, "start": START, "end": END, "missing": miss,
+                   "edinet_codes": len(ed), "jpx_codes": len(jp), "requested": len(codes), "got": len(C),
                    "dates": d, "splits": s, "jpx_notes": NOTES}, f, ensure_ascii=False, indent=1)
     return 0
 
