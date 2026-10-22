@@ -2,6 +2,13 @@
  "complete": true,
  "docs": 146,
  "failed": [],
+ "future_days": 0,
  "list_fail": 0,
- "rows": 146
+ "no_csv": [
+  "S100MHRI"
+ ],
+ "rejected": false,
+ "rows": 146,
+ "stopped": false,
+ "v": 2
 }
