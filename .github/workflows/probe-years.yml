@@ -1,0 +1,28 @@
+name: probe-years
+
+# 遡りの診断: 指定した日の有報の件数・CSV の有無と、今の読み方で数値が埋まる割合を印字する（何も保存しない・手動起動のみ）
+on:
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: "日付をカンマ区切りで（YYYY-MM-DD）"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Probe years
+        env:
+          EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
+          DATES: ${{ inputs.dates }}
+        run: python edinet_fin.py --probe-years "$DATES"

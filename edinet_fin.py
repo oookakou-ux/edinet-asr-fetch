@@ -274,6 +274,48 @@ def probe_docs(ids, log=print, sleep=0.7):
     return 0
 
 
+def probe_years(dates, n=25, log=print, sleep=0.7):
+    """遡りの診断（2026-10-23 ユーザー「遡って検証してみて」）: 指定した日の一覧で有報の件数・CSV の有無を数え、
+    CSV のある有報を先頭 n 件だけ取って、今の読み方（extract）で数値が埋まる割合を印字する（何も保存しない）。
+    EDINET がどこまで遡れるか・古い有報の要素名が今と同じかを、全量を取る前に確かめる"""
+    import time
+    keys = ("sales", "sales_p4", "op", "eps", "dps", "eq_ratio", "assets", "shares_fy")
+    for d in dates:
+        try:
+            _meta, res = list_docs(d)
+        except Exception as e:
+            log("probe-years: {} 一覧を取れない ({})".format(d, _mask(e)))
+            continue
+        asr = [x for x in res if str(x.get("docTypeCode")) == ASR and x.get("secCode")
+               and str(x.get("withdrawalStatus") or "0") == "0"]
+        csv1 = [x for x in asr if str(x.get("csvFlag")) == "1"]
+        log("probe-years: {} 書類 {}件・有報（証券コードあり） {}件・うち CSV あり {}件・XBRL あり {}件".format(
+            d, len(res), len(asr), len(csv1), sum(1 for x in asr if str(x.get("xbrlFlag")) == "1")))
+        if asr and not csv1:
+            x = asr[0]
+            try:
+                b = fetch_csv_zip(x["docID"])
+                log("probe-years:   CSV フラグ無しでも type=5 を引くと {} バイト・行 {}".format(len(b), len(parse_csv_zip(b))))
+            except Exception as e:
+                log("probe-years:   CSV フラグ無し・type=5 は取れない ({})".format(_mask(e)))
+        got, std = [], Counter()
+        for x in csv1[:n]:
+            try:
+                rows = parse_csv_zip(fetch_csv_zip(x["docID"]))
+                r = extract(rows, x)
+                got.append(r)
+                std[r.get("std") or "?"] += 1
+            except Exception as e:
+                log("probe-years:   {} を取れない ({})".format(x.get("docID"), _mask(e)))
+            time.sleep(sleep)
+        if got:
+            fill = {k: "{}/{}".format(sum(1 for r in got if r.get(k) is not None), len(got)) for k in keys}
+            log("probe-years:   読めた {}件・会計基準 {}・埋まった {}".format(len(got), dict(std), fill))
+            log("probe-years:   期末の例 {}".format(sorted({str(r.get("fy_end")) for r in got})[:4]))
+        time.sleep(sleep)
+    return 0
+
+
 SURVEY_DATES = (("2025-06-27", None), ("2025-03-27", 150))   # 3月期の集中日（全件）と12月期の集中日（先頭150件）
 _NUM = re.compile(r"^-?[0-9][0-9,]*(\.[0-9]+)?$")
 _FS = re.compile(r"^(jppfs_cor|jpigp_cor|jpcrp_cor):.*(Sales|Revenue|OperatingIncome|OperatingProfit|"
@@ -730,6 +772,9 @@ if __name__ == "__main__":
         ids = [x.strip() for x in open(src, encoding="utf-8") if re.fullmatch(r"S[0-9A-Z]{7}", x.strip())]
         dl = os.environ.get("EDINET_DEADLINE")
         sys.exit(refetch_docs(ids, deadline=float(dl) if dl else None))
+    if "--probe-years" in sys.argv:
+        ds = [x for x in sys.argv[sys.argv.index("--probe-years") + 1].split(",") if re.fullmatch(r"20[0-9]{2}-[01][0-9]-[0-3][0-9]", x)]
+        sys.exit(probe_years(ds))
     if "--probe-docs" in sys.argv:
         ids = [x for x in sys.argv[sys.argv.index("--probe-docs") + 1].split(",") if re.fullmatch(r"S[0-9A-Z]{7}", x)]
         sys.exit(probe_docs(ids))
