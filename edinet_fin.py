@@ -364,15 +364,26 @@ _DUR = ("Current", "Prior1", "Prior2", "Prior3", "Prior4")
 SALES_JP = ("jpcrp_cor:NetSalesSummaryOfBusinessResults", "jpcrp_cor:OperatingRevenue1SummaryOfBusinessResults",
             "jpcrp_cor:NetSalesAndOperatingRevenueSummaryOfBusinessResults",
             "jpcrp_cor:OperatingRevenue2SummaryOfBusinessResults")
-SALES_IFRS = ("jpcrp_cor:RevenueIFRSSummaryOfBusinessResults",)
+SALES_IFRS = ("jpcrp_cor:RevenueIFRSSummaryOfBusinessResults", "jpcrp_cor:NetSalesIFRSSummaryOfBusinessResults")
+SALES_US = ("jpcrp_cor:RevenuesUSGAAPSummaryOfBusinessResults",)
+# 🔴 C-140 の穴（2026-10-22）: 標準の要素が無いとき、**要素名の末尾（接頭辞を除いた名前）**で会社独自の要素を拾う。
+#   ソフトバンク・日本ハムは要約の売上が `jpcrp030000-asr_E04426-000:NetSalesIFRSSummaryOfBusinessResults`、
+#   トヨタは `…:OperatingRevenuesIFRSKeyFinancialData`。標準の要素を先に見るので、これまで取れていた会社の値は変わらない
+SALES_LOCAL = re.compile(r"^(NetSales|Revenue|Revenues|OperatingRevenue\d?|OperatingRevenues|NetSalesAndOperatingRevenue|"
+                         r"TotalNetRevenues|SalesRevenues)(IFRS|USGAAP|JMIS)?(SummaryOfBusinessResults|KeyFinancialData)$")
+OP_LOCAL = re.compile(r"^(OperatingIncome|OperatingProfit|OperatingIncomeLoss|OperatingProfitLoss)(IFRS|USGAAP|JMIS)?"
+                      r"(SummaryOfBusinessResults|KeyFinancialData)?$")
 OP = ("jppfs_cor:OperatingIncome", "jpigp_cor:OperatingProfitLossIFRS")
 SALES_FS = ("jppfs_cor:NetSales", "jpigp_cor:RevenueIFRS")
 EPS = ("jpcrp_cor:BasicEarningsLossPerShareSummaryOfBusinessResults",
-       "jpcrp_cor:BasicEarningsLossPerShareIFRSSummaryOfBusinessResults")
+       "jpcrp_cor:BasicEarningsLossPerShareIFRSSummaryOfBusinessResults",
+       "jpcrp_cor:BasicEarningsLossPerShareUSGAAPSummaryOfBusinessResults")
 EQ_RATIO = ("jpcrp_cor:EquityToAssetRatioSummaryOfBusinessResults",
             "jpcrp_cor:RatioOfOwnersEquityToGrossAssetsIFRSSummaryOfBusinessResults",
-            "jpcrp_cor:EquityToAssetRatioIFRSSummaryOfBusinessResults")
-ASSETS = ("jpcrp_cor:TotalAssetsSummaryOfBusinessResults", "jpcrp_cor:TotalAssetsIFRSSummaryOfBusinessResults")
+            "jpcrp_cor:EquityToAssetRatioIFRSSummaryOfBusinessResults",
+            "jpcrp_cor:EquityToAssetRatioUSGAAPSummaryOfBusinessResults")
+ASSETS = ("jpcrp_cor:TotalAssetsSummaryOfBusinessResults", "jpcrp_cor:TotalAssetsIFRSSummaryOfBusinessResults",
+          "jpcrp_cor:TotalAssetsUSGAAPSummaryOfBusinessResults")
 EQUITY_FS = ("jppfs_cor:ShareholdersEquity", "jpigp_cor:EquityAttributableToOwnersOfParentIFRS")
 # 補助(c)＝アプリ v16 の式（NOPAT＝営業利益×(1−実効税率)）にだけ使う。⚠ survey で数えていない要素なので、
 #   読めなければ空のまま（主判定は書籍の原式で税率を使わない）
@@ -420,7 +431,11 @@ def extract(rows, meta=None):
             return e, x
         return None, None
 
-    sales_order = SALES_IFRS + SALES_JP if std == "IFRS" else SALES_JP + SALES_IFRS
+    sales_order = SALES_IFRS + SALES_JP if std == "IFRS" else SALES_US + SALES_JP if std == "US GAAP" else SALES_JP + SALES_IFRS
+    # 標準の要素の後ろに、末尾の名前が合う会社独自の要素を足す（文脈は完全一致で引くので、セグメント行は拾わない）
+    local = sorted({e for (e, _c) in v if ":" in str(e) and not str(e).startswith(("jpcrp_cor:", "jppfs_cor:", "jpigp_cor:"))})
+    sales_order = sales_order + tuple(e for e in local if SALES_LOCAL.match(e.split(":", 1)[1]))
+    op_order = tuple(e for e in local if OP_LOCAL.match(e.split(":", 1)[1]))
     out = {"std": std, "cons": cons}
     used = []
     for k, col in zip(_DUR, ("sales", "sales_p1", "sales_p2", "sales_p3", "sales_p4")):
@@ -432,8 +447,9 @@ def extract(rows, meta=None):
     out["sales_mixed"] = len(set(used)) > 1
     ifrs = std == "IFRS"
     out["sales_fs"] = _f(get(SALES_FS[::-1] if ifrs else SALES_FS, "CurrentYearDuration" + sfx)[1])
-    out["op"] = _f(get(OP[::-1] if ifrs else OP, "CurrentYearDuration" + sfx)[1])
-    out["eps"] = _f(get(EPS[::-1] if std == "IFRS" else EPS, "CurrentYearDuration" + sfx)[1])
+    out["op"] = _f(get((OP[::-1] if ifrs else OP) + op_order, "CurrentYearDuration" + sfx)[1])
+    out["eps"] = _f(get(EPS[1:] + EPS[:1] if std == "IFRS" else EPS[2:] + EPS[:2] if std == "US GAAP" else EPS,
+                        "CurrentYearDuration" + sfx)[1])
     _e, d = get(("jpcrp_cor:DividendPaidPerShareSummaryOfBusinessResults",), "CurrentYearDuration_NonConsolidatedMember",
                 dash_ok=True)
     out["dps_dash"] = (d or "").strip() in _DASH
@@ -607,7 +623,103 @@ def failing_months(lo, hi, only=None):
                   and (v.get("list_fail") or v.get("failed") or v.get("rejected")))
 
 
+EXTRACT_V = 2   # 会社独自の要約の要素・米国基準の要素を読む版（2026-10-22 C-140 の穴）
+_META = {"docID": "docID", "secCode": "code4", "edinetCode": "edinetCode", "filerName": "filerName",
+         "submitDateTime": "submit", "periodStart": "periodStart", "periodEnd": "periodEnd"}
+_SAME = ("sales_elem", "sales_mixed")     # 埋まった年が増えれば変わって当然の印（値の食い違いには数えない）
+
+
+def _same(a, b):
+    """CSV から読んだ文字列 a と、抽出し直した値 b が同じか（数は数として比べる）"""
+    na = a is None or (isinstance(a, float) and a != a) or str(a) == ""
+    nb = b is None or (isinstance(b, float) and b != b) or str(b) == ""
+    if na or nb:
+        return na and nb
+    try:
+        return abs(float(a) - float(b)) <= 1e-9 * max(1.0, abs(float(b)))
+    except (TypeError, ValueError):
+        return str(a) == str(b)
+
+
+def refetch_docs(ids, log=print, sleep=0.7, deadline=None):
+    """C-140 の穴（2026-10-22）: 指定した書類を取り直し、**抽出し直した値**で月のファイルの行を差し替える。
+    書類の属性（提出日・期間など）は元の行から引き継ぐ（一覧を引き直さない）。取れなかった書類は元の行を残す。
+    ⚠ 標準の要素を先に読むので、**前に埋まっていた値は変わらないはず** ─ 変わったら `changed` に残してログに出す。
+    途中で止まっても続きから（`_refetch.json` の `done` は同じ版なら飛ばす）"""
+    import json
+    import time
+    import pandas as pd
+    import paths as P
+    prog_p = P.EDINET_DIR / "_refetch.json"
+    prog = json.loads(prog_p.read_text(encoding="utf-8")) if prog_p.exists() else {}
+    if prog.get("v") != EXTRACT_V:
+        prog = {"v": EXTRACT_V, "done": [], "failed": [], "filled": {}, "changed": []}
+    done = set(prog["done"])
+    files, where = {}, {}
+    for f in sorted(P.EDINET_DIR.glob("asr_*.csv.gz")):
+        df = pd.read_csv(f, dtype=object, keep_default_na=False)     # str 型の列には数を入れられない（pandas 3）
+        files[f] = df
+        for i, d in enumerate(df["docID"]):
+            where.setdefault(d, (f, i))
+    todo = [d for d in dict.fromkeys(ids) if d in where and d not in done]
+    miss = [d for d in ids if d not in where]
+    if miss:
+        log("refetch: ファイルに無い書類 {}件（飛ばす）: {}".format(len(miss), miss[:5]))
+    log("refetch: 対象 {}件（済み {}件を除く）".format(len(todo), len(done & set(ids))))
+    touched, stopped, failed = set(), False, set(prog["failed"])
+
+    def flush():
+        for f in touched:
+            files[f].to_csv(f, index=False, compression="gzip")
+        prog["done"], prog["failed"] = sorted(done), sorted(failed - done)
+        prog_p.write_text(json.dumps(prog, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
+        touched.clear()
+
+    for n, d in enumerate(todo, 1):
+        if deadline and time.time() > deadline:
+            stopped = True
+            break
+        f, i = where[d]
+        old = files[f].iloc[i].to_dict()
+        try:
+            rows = parse_csv_zip(fetch_csv_zip(d))
+            if not rows:
+                raise ValueError("ZIP に読める CSV の行が無い")
+            new = extract(rows, {k: old.get(c, "") for k, c in _META.items()})
+        except Exception as e:
+            failed.add(d)
+            log("refetch: {} を取れない ({})".format(d, _mask(e)))
+            time.sleep(sleep)
+            continue
+        for c in COLS:
+            if _same(old.get(c), new.get(c)):
+                continue
+            if old.get(c, "") == "":
+                prog["filled"][c] = prog["filled"].get(c, 0) + 1
+            elif c not in _SAME:
+                prog["changed"].append({"docID": d, "col": c, "old": old.get(c), "new": new.get(c)})
+                log("refetch: ⚠ {} {} の値が変わった {} → {}".format(d, c, old.get(c), new.get(c)))
+        files[f].iloc[i] = ["" if new.get(c) is None else new.get(c) for c in files[f].columns]
+        touched.add(f)
+        done.add(d)
+        failed.discard(d)
+        if n % 200 == 0:
+            flush()
+            log("refetch: {} / {}".format(n, len(todo)))
+        time.sleep(sleep)
+    flush()
+    left = [d for d in todo if d not in done]
+    log("refetch: 取り直し {}件・取れない {}件・残り {}件／空欄が埋まった {}／前の値が変わった {}件".format(
+        len(done & set(ids)), len(failed), len(left), prog["filled"], len(prog["changed"])))
+    return 3 if stopped else 2 if failed else 0
+
+
 if __name__ == "__main__":
+    if "--refetch-docs" in sys.argv:
+        src = sys.argv[sys.argv.index("--refetch-docs") + 1]
+        ids = [x.strip() for x in open(src, encoding="utf-8") if re.fullmatch(r"S[0-9A-Z]{7}", x.strip())]
+        dl = os.environ.get("EDINET_DEADLINE")
+        sys.exit(refetch_docs(ids, deadline=float(dl) if dl else None))
     if "--probe-docs" in sys.argv:
         ids = [x for x in sys.argv[sys.argv.index("--probe-docs") + 1].split(",") if re.fullmatch(r"S[0-9A-Z]{7}", x)]
         sys.exit(probe_docs(ids))
@@ -624,4 +736,4 @@ if __name__ == "__main__":
             sys.exit(0)
         dl = os.environ.get("EDINET_DEADLINE")
         sys.exit(fetch_month(ym, deadline=float(dl) if dl else None))
-    print("使い方: python edinet_fin.py --probe | --survey | --fetch-month YYYY-MM")
+    print("使い方: python edinet_fin.py --probe | --survey | --fetch-month YYYY-MM | --refetch-docs 一覧.txt | --probe-docs ID,ID")
