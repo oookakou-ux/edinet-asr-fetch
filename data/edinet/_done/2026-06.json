@@ -1,0 +1,15 @@
+{
+ "complete": true,
+ "docs": 2194,
+ "failed": [],
+ "future_days": 0,
+ "list_fail": 0,
+ "no_csv": [
+  "S100YB3Z",
+  "S100YCTT"
+ ],
+ "rejected": false,
+ "rows": 2194,
+ "stopped": false,
+ "v": 2
+}
