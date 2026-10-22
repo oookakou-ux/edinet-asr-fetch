@@ -1,7 +1,15 @@
 {
  "complete": true,
- "docs": 2358,
+ "docs": 2355,
  "failed": [],
+ "future_days": 0,
  "list_fail": 0,
- "rows": 2358
+ "no_csv": [
+  "S100O5L3",
+  "S100O7U4"
+ ],
+ "rejected": false,
+ "rows": 2355,
+ "stopped": false,
+ "v": 2
 }
