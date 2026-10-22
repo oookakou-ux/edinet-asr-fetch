@@ -11,6 +11,7 @@
 """
 import glob
 import io
+import os
 import sys
 import time
 
@@ -68,6 +69,13 @@ def jpx_codes():
                 url = m.group(1) if m.group(1).startswith("http") else "https://www.jpx.co.jp" + m.group(1)
             df = pd.read_excel(io.BytesIO(_jpx_get(url).content), dtype=str)
             col = next(c for c in df.columns if "コード" in str(c))
+            kind = next((c for c in df.columns if "市場" in str(c) and "区分" in str(c)), None)
+            if kind is not None and os.environ.get("JPX_STOCKS_ONLY") == "1":
+                n0 = len(df)
+                df = df[df[kind].astype(str).str.contains("株式")]     # ETF・REIT・出資証券などを外す（母集団は株式だけ）
+                msg = "JPX: 株式だけ {:,}/{:,}（区分の列 {}）".format(len(df), n0, kind)
+                log(msg)
+                NOTES.append(msg)
             out = {c for c in (CU.norm_code(x) for x in df[col].dropna()) if c}
             log("JPX の上場銘柄一覧 {:,}銘柄（{}）".format(len(out), attempt))
             return out
@@ -149,10 +157,14 @@ def save(C, A, S, path):
 
 
 def main():
-    import os
     ed, jp = edinet_codes(), jpx_codes()
     mode = os.environ.get("CODES", "all")
-    if mode == "jpx_new":
+    if mode == "missing":
+        # 前に取れた銘柄（prices/have.txt・ティッカーのコードだけ）を除いた残りだけ取る（Yahoo の回数制限を避ける・2026-10-22）
+        have = {l.strip() for l in open("prices/have.txt", encoding="utf-8") if l.strip()}
+        codes = sorted(((ed | jp) - have) | {BENCH})
+        log("前に取れた {:,}銘柄を除く".format(len(have)))
+    elif mode == "jpx_new":
         # 足りない分だけ取る: JPX の一覧にあって EDINET に無い銘柄（新規上場など）＋ 1306（同じ日の突き合わせ用）。
         # 全銘柄を1時間に3回取り直すと Yahoo の回数制限で半分落ちた（2026-10-22）
         if not jp:
