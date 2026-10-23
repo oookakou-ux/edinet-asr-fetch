@@ -1,0 +1,14 @@
+{
+ "complete": true,
+ "docs": 54,
+ "failed": [],
+ "future_days": 0,
+ "list_fail": 0,
+ "no_csv": [
+  "S100FMX6"
+ ],
+ "rejected": false,
+ "rows": 54,
+ "stopped": false,
+ "v": 2
+}
