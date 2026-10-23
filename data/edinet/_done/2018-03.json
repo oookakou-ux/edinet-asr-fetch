@@ -1,0 +1,14 @@
+{
+ "complete": true,
+ "docs": 405,
+ "failed": [],
+ "future_days": 0,
+ "list_fail": 0,
+ "no_csv": [
+  "S100CK3E"
+ ],
+ "rejected": false,
+ "rows": 405,
+ "stopped": false,
+ "v": 2
+}
