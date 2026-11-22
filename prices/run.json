@@ -1,13 +1,23 @@
 {
  "mode": "have",
- "start": "2019-03-01",
+ "start": "2016-01-01",
  "end": null,
- "missing": [],
+ "missing": [
+  "2162",
+  "2180",
+  "3079",
+  "3480",
+  "5103",
+  "5660",
+  "9914"
+ ],
  "edinet_codes": 0,
  "jpx_codes": 0,
  "requested": 3721,
- "got": 3721,
- "dates": 1864,
- "splits": 1256,
+ "got": 3714,
+ "dates": 2680,
+ "splits": 2328,
+ "ohlcv_parts": 5,
+ "ohlcv_got": 3714,
  "jpx_notes": []
 }
