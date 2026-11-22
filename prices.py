@@ -8,6 +8,9 @@
     dates (datetime64[D]) / codes (U4) / close, adj (float32, 日付×銘柄・欠けは NaN) /
     split_date (datetime64[D]) / split_code (U4) / split_ratio (float64)
 - ファイルはワークフローが暗号化してから置く（価格そのものは公開しない）
+- 環境変数 OHLCV=1 のときは、始値・高値・安値・出来高も取り、銘柄を OHLCV_PART 銘柄ずつに分けて
+  prices_ohlcv_<k>.npz に書く（dates / codes / open, high, low, volume。始値・高値・安値は終値と同じく分割だけ調整）。
+  1つのファイルが GitHub の上限（100MB）を超えないように分ける（2026-11-22・C-161 の10年遡り）
 """
 import glob
 import io
@@ -25,6 +28,8 @@ START = os.environ.get("PX_START") or "2019-03-01"
 END = os.environ.get("PX_END") or None          # 遡り（2026-10-23）: 2019-03 より前だけを取るときに終わりを切る
 BENCH = "1306"
 CHUNK, RETRY = 150, 3
+OHLCV = os.environ.get("OHLCV") == "1"
+OHLCV_PART = 800
 JPX_URL = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
 JPX_PAGE = "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"
 UA = {"User-Agent": "Mozilla/5.0 (research; contact via GitHub)"}
@@ -99,6 +104,7 @@ def _norm(s):
 def _pass(codes, chunk):
     import yfinance as yf
     C, A, S, D = {}, {}, {}, {}
+    X = {}      # OHLCV=1 のとき: コード → (始値, 高値, 安値, 出来高)
     items = sorted(codes)
     for i in range(0, len(items), chunk):
         part = items[i:i + chunk]
@@ -124,21 +130,41 @@ def _pass(codes, chunk):
                 continue
             if len(cl):
                 C[c], A[c], S[c], D[c] = cl, ad, sp[sp > 0], dv[dv > 0]
+                if OHLCV:
+                    try:
+                        X[c] = (_norm(sub["Open"]), _norm(sub["High"]), _norm(sub["Low"]), _norm(sub["Volume"]))
+                    except Exception:
+                        pass
         time.sleep(1.0)
-    return C, A, S, D
+    return C, A, S, D, X
 
 
 def fetch(codes):
-    C, A, S, D = _pass(codes, CHUNK)
+    C, A, S, D, X = _pass(codes, CHUNK)
     for k, wait in ((50, 10.0), (20, 30.0)):
         miss = sorted(set(codes) - set(C))
         if not miss:
             break
         log("取れなかった {}銘柄をもう一度（束 {}）".format(len(miss), k))
         time.sleep(wait)
-        C2, A2, S2, D2 = _pass(miss, k)
-        C.update(C2), A.update(A2), S.update(S2), D.update(D2)
-    return C, A, S, D
+        C2, A2, S2, D2, X2 = _pass(miss, k)
+        C.update(C2), A.update(A2), S.update(S2), D.update(D2), X.update(X2)
+    return C, A, S, D, X
+
+
+def save_ohlcv(X, dates, codes):
+    """始値・高値・安値・出来高を OHLCV_PART 銘柄ずつのファイルに分けて書く。戻り値は書いたファイルの数"""
+    k = 0
+    for i in range(0, len(codes), OHLCV_PART):
+        part = codes[i:i + OHLCV_PART]
+        arr = {}
+        for j, name in enumerate(("open", "high", "low", "volume")):
+            df = pd.DataFrame({c: X[c][j] for c in part if c in X}).reindex(index=dates, columns=part)
+            arr[name] = df.to_numpy(dtype=np.float32)
+        np.savez("prices_ohlcv_{}.npz".format(k), dates=dates.values.astype("datetime64[D]"),
+                 codes=np.array(part, dtype="U4"), **arr)
+        k += 1
+    return k
 
 
 def save(C, A, S, path, D=None):
@@ -199,7 +225,7 @@ def main():
     else:
         codes = sorted(ed | jp | {BENCH})
     log("銘柄（{}）: EDINET {:,} ∪ JPX {:,} → {:,}".format(mode, len(ed), len(jp), len(codes)))
-    C, A, S, D = fetch(codes)
+    C, A, S, D, X = fetch(codes)
     miss = sorted(set(codes) - set(C))
     log("取れた {:,} / {:,}（取れない {:,}・先頭の文字別 {}）".format(
         len(C), len(codes), len(miss), dict(pd.Series([m[0] for m in miss]).value_counts()) if miss else {}))
@@ -207,13 +233,20 @@ def main():
         log("🔴 1306 が取れない")
         return 1
     n, d, s = save(C, A, S, "prices.npz", D)
+    n_parts = 0
+    if OHLCV:
+        cds = sorted(C)
+        dts = pd.DatetimeIndex(sorted(set().union(*[set(C[c].index) | set(A[c].index) for c in cds])))
+        n_parts = save_ohlcv(X, dts, cds)
+        log("始値・高値・安値・出来高: {:,}銘柄（終値のある {:,}銘柄のうち）・{}ファイル".format(len(X), len(cds), n_parts))
     log("書いた: 銘柄 {:,} × 日付 {:,}・分割 {:,}件（{}〜{}）".format(n, d, s, C[BENCH].index.min().date(),
                                                          C[BENCH].index.max().date()))
     import json
     with open("prices/run.json", "w", encoding="utf-8") as f:
         json.dump({"mode": mode, "start": START, "end": END, "missing": miss,
                    "edinet_codes": len(ed), "jpx_codes": len(jp), "requested": len(codes), "got": len(C),
-                   "dates": d, "splits": s, "jpx_notes": NOTES}, f, ensure_ascii=False, indent=1)
+                   "dates": d, "splits": s, "ohlcv_parts": n_parts, "ohlcv_got": len(X),
+                   "jpx_notes": NOTES}, f, ensure_ascii=False, indent=1)
     return 0
 
 
